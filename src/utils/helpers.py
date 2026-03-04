@@ -1,0 +1,246 @@
+"""
+工具函数模块
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import sys
+from pathlib import Path
+
+import yaml
+
+logger = logging.getLogger(__name__)
+
+
+def load_yaml_config(config_path: str | Path) -> dict:
+    """加载 YAML 配置文件"""
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"配置文件不存在: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def setup_logging(level: str = "INFO", log_file: str | None = None):
+    """配置日志"""
+    log_format = "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
+    date_format = "%Y-%m-%d %H:%M:%S"
+
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    if log_file:
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format=log_format,
+        datefmt=date_format,
+        handlers=handlers,
+        force=True,
+    )
+
+
+def safe_json_loads(text: str, default=None):
+    """安全解析 JSON 字符串"""
+    if not text or not text.strip():
+        return default if default is not None else {}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        logger.warning(f"JSON 解析失败: {text[:100]}...")
+        return default if default is not None else {}
+
+
+def generate_sample_yaml(output_path: str | Path):
+    """
+    生成示例 YAML 用例文件
+
+    方便用户参考格式填写自己的功能用例。
+    YAML 格式天然支持嵌套结构，比 Excel 里写 JSON 字符串更直观。
+    """
+    sample_content = r'''# ============================================
+# Auto Pytest 示例用例文件
+# 将功能用例描述为结构化 YAML，自动生成 pytest 测试代码
+# ============================================
+
+# (可选) 全局默认配置，会被每条用例继承，用例级字段可覆盖
+global_config:
+  is_async: true
+  content_type: "application/json"
+
+cases:
+
+  # --------------------------------------------------
+  # 1. 基本 GET 请求
+  # --------------------------------------------------
+  - case_id: TC_001
+    module: user
+    title: 获取用户列表
+    description: 验证获取用户列表接口正常返回
+    priority: P0
+    tags: [smoke, user]
+    method: GET
+    path: /api/v1/users
+    params:
+      page: 1
+      size: 10
+    expected_status: 200
+    assertions:
+      - type: json_field
+        field: code
+        operator: eq
+        expected: 0
+      - type: json_field
+        field: data.total
+        operator: gt
+        expected: 0
+
+  # --------------------------------------------------
+  # 2. POST 创建资源
+  # --------------------------------------------------
+  - case_id: TC_002
+    module: user
+    title: 创建新用户
+    description: 验证创建用户接口
+    priority: P0
+    tags: [user, create]
+    method: POST
+    path: /api/v1/users
+    body:
+      name: 张三
+      email: zhangsan@test.com
+      age: 28
+    expected_status: 201
+    assertions:
+      - type: json_field
+        field: code
+        operator: eq
+        expected: 0
+      - type: json_field
+        field: data.name
+        operator: eq
+        expected: 张三
+
+  # --------------------------------------------------
+  # 3. 数据驱动（参数化多场景）
+  # --------------------------------------------------
+  - case_id: TC_003
+    module: user
+    title: 用户登录-多场景
+    description: 数据驱动验证登录接口的正常和异常场景
+    priority: P0
+    tags: [user, login]
+    method: POST
+    path: /api/v1/auth/login
+    expected_status: 200
+    test_data:
+      - name: 正常登录
+        body:
+          username: admin
+          password: "123456"
+        assertions:
+          - type: status_code
+            operator: eq
+            expected: 200
+          - type: json_field
+            field: data.token
+            operator: ne
+            expected: ""
+
+      - name: 密码错误
+        body:
+          username: admin
+          password: wrong_password
+        assertions:
+          - type: status_code
+            operator: eq
+            expected: 200
+          - type: json_field
+            field: code
+            operator: eq
+            expected: 401
+
+      - name: 用户名为空
+        body:
+          username: ""
+          password: "123456"
+        assertions:
+          - type: status_code
+            operator: eq
+            expected: 200
+          - type: json_field
+            field: code
+            operator: eq
+            expected: 400
+
+  # --------------------------------------------------
+  # 4. 带前置步骤（接口依赖）
+  # --------------------------------------------------
+  - case_id: TC_004
+    module: order
+    title: 创建订单
+    description: 先登录获取 token，再创建订单
+    priority: P1
+    tags: [order]
+    method: POST
+    path: /api/v1/orders
+    body:
+      product_id: 1001
+      quantity: 2
+    expected_status: 201
+    setup_steps:
+      - description: 登录获取token
+        method: POST
+        url: /api/v1/auth/login
+        body:
+          username: admin
+          password: "123456"
+        extract:
+          token: data.token
+    assertions:
+      - type: json_field
+        field: code
+        operator: eq
+        expected: 0
+      - type: json_field
+        field: data.order_id
+        operator: ne
+        expected: ""
+
+  # --------------------------------------------------
+  # 5. DELETE 请求 + 用例依赖
+  # --------------------------------------------------
+  - case_id: TC_005
+    module: user
+    title: 删除用户
+    description: 删除指定用户
+    priority: P2
+    tags: [user, delete]
+    method: DELETE
+    path: /api/v1/users/1
+    depends_on: [TC_002]
+    expected_status: 204
+
+  # --------------------------------------------------
+  # 6. 跳过的用例
+  # --------------------------------------------------
+  - case_id: TC_006
+    module: user
+    title: 用户头像上传
+    description: 上传用户头像（接口开发中）
+    priority: P3
+    tags: [user]
+    method: POST
+    path: /api/v1/users/avatar
+    content_type: multipart/form-data
+    expected_status: 200
+    skip: true
+    skip_reason: 接口尚未上线
+'''
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(sample_content, encoding="utf-8")
+    logger.info(f"示例 YAML 文件已生成: {output_path}")
+    return output_path

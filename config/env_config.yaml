@@ -1,0 +1,45 @@
+# ============================================
+# 多环境配置文件
+# ============================================
+
+# 当前激活的环境
+active_env: dev
+
+# 环境配置
+environments:
+  dev:
+    base_url: "http://localhost:8080"
+    timeout: 30
+    headers:
+      Content-Type: "application/json"
+      X-Env: "development"
+    auth:
+      type: "bearer"  # bearer / basic / api_key / none
+      token: "dev-token-xxx"
+
+  test:
+    base_url: "https://test-api.example.com"
+    timeout: 30
+    headers:
+      Content-Type: "application/json"
+      X-Env: "testing"
+    auth:
+      type: "bearer"
+      token: "test-token-xxx"
+
+  prod:
+    base_url: "https://api.example.com"
+    timeout: 60
+    headers:
+      Content-Type: "application/json"
+      X-Env: "production"
+    auth:
+      type: "bearer"
+      token: "prod-token-xxx"
+
+# 全局配置
+global:
+  retry: 3
+  retry_delay: 1
+  log_level: "INFO"
+  report_dir: "reports"

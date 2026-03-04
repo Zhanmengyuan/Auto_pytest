@@ -1,0 +1,241 @@
+{# ================================================================= #}
+{# pytest + httpx 异步接口测试代码模板                                  #}
+{# 由 auto_pytest 自动生成 —— 请勿手动编辑                              #}
+{# ================================================================= #}
+"""
+自动生成的接口测试文件
+模块: {{ module }}
+生成时间: {{ gen_time }}
+"""
+
+import json
+import pytest
+import httpx
+{% if has_async %}
+import pytest_asyncio
+{% endif %}
+
+{% if has_data_driven %}
+
+# ============================================
+# 数据驱动测试数据
+# ============================================
+{% for case in cases %}
+{% if case.is_data_driven %}
+{{ case.function_name }}_data = {{ case.test_data | tojson(4) }}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+
+class {{ class_name }}:
+    """{{ module }} 模块接口测试"""
+
+{% for case in cases %}
+    # --------------------------------------------------
+    # {{ case.case_id }}: {{ case.title }}
+    # --------------------------------------------------
+{% if case.skip %}
+    @pytest.mark.skip(reason="{{ case.skip_reason or '用例已标记跳过' }}")
+{% endif %}
+{% if case.tags %}
+{% for tag in case.tags %}
+    @pytest.mark.{{ tag }}
+{% endfor %}
+{% endif %}
+    @pytest.mark.{{ case.priority | lower }}
+{% if case.is_data_driven %}
+    @pytest.mark.parametrize(
+        "test_data_item",
+        {{ case.function_name }}_data,
+        ids=[d.get("name", f"data_{i}") for i, d in enumerate({{ case.function_name }}_data)],
+    )
+{% endif %}
+{% if case.is_async %}
+    @pytest.mark.asyncio
+    async def {{ case.function_name }}(self, async_client: httpx.AsyncClient{{ ", test_data_item: dict" if case.is_data_driven else "" }}):
+{% else %}
+    def {{ case.function_name }}(self, sync_client: httpx.Client{{ ", test_data_item: dict" if case.is_data_driven else "" }}):
+{% endif %}
+        """
+        {{ case.title }}
+        {{ case.description }}
+        优先级: {{ case.priority }}
+        """
+{% if case.setup_steps %}
+        # ---- 前置操作 ----
+        _extracted = {}
+{% for step in case.setup_steps %}
+        # 前置步骤: {{ step.description }}
+{% if case.is_async %}
+        _setup_resp_{{ loop.index }} = await async_client.request(
+            method="{{ step.method }}",
+            url="{{ step.url }}",
+            headers={{ step.headers | tojson }},
+{% if step.body %}
+            json={{ step.body | tojson }},
+{% endif %}
+        )
+{% else %}
+        _setup_resp_{{ loop.index }} = sync_client.request(
+            method="{{ step.method }}",
+            url="{{ step.url }}",
+            headers={{ step.headers | tojson }},
+{% if step.body %}
+            json={{ step.body | tojson }},
+{% endif %}
+        )
+{% endif %}
+{% if step.extract %}
+        _setup_data_{{ loop.index }} = _setup_resp_{{ loop.index }}.json()
+{% for var_name, json_path in step.extract.items() %}
+        _extracted["{{ var_name }}"] = _extract_json_path(_setup_data_{{ loop.index }}, "{{ json_path }}")
+{% endfor %}
+{% endif %}
+{% endfor %}
+
+{% endif %}
+{% if case.is_data_driven %}
+        # ---- 数据驱动：合并参数 ----
+        _params = {{ case.params | tojson }}
+        _params.update(test_data_item.get("params", {}))
+        _body = {{ case.body | tojson }}
+        _body.update(test_data_item.get("body", {}))
+        _headers = {{ case.headers | tojson }}
+        _headers.update(test_data_item.get("headers", {}))
+{% else %}
+        _params = {{ case.params | tojson }}
+        _body = {{ case.body | tojson }}
+        _headers = {{ case.headers | tojson }}
+{% endif %}
+
+        # ---- 发送请求 ----
+{% if case.is_async %}
+        response = await async_client.request(
+{% else %}
+        response = sync_client.request(
+{% endif %}
+            method="{{ case.method }}",
+            url="{{ case.path }}",
+            params=_params if _params else None,
+{% if case.method in ("POST", "PUT", "PATCH") %}
+{% if case.content_type == "application/x-www-form-urlencoded" %}
+            data=_body if _body else None,
+{% else %}
+            json=_body if _body else None,
+{% endif %}
+{% endif %}
+            headers=_headers if _headers else None,
+        )
+
+        # ---- 断言 ----
+        assert response.status_code == {{ case.expected_status }}, (
+            f"状态码不匹配: 预期 {{ case.expected_status }}, 实际 {response.status_code}, "
+            f"响应: {response.text[:500]}"
+        )
+{% if case.is_data_driven %}
+
+        # 数据驱动断言
+        _assertions = test_data_item.get("assertions", [])
+        for _a in _assertions:
+            _do_assertion(response, _a)
+{% endif %}
+{% for assertion in case.assertions %}
+
+{% if assertion.type == "status_code" %}
+        # 断言: 状态码 {{ assertion.operator }} {{ assertion.expected }}
+        assert response.status_code {{ assertion.operator | operator_symbol }} {{ assertion.expected }}
+{% elif assertion.type == "json_field" %}
+        # 断言: JSON 字段 {{ assertion.field }} {{ assertion.operator }} {{ assertion.expected }}
+        _resp_json = response.json()
+        _actual_val = _extract_json_path(_resp_json, "{{ assertion.field }}")
+{% if assertion.operator == "eq" %}
+        assert _actual_val == {{ assertion.expected | tojson }}, (
+            f"字段 '{{ assertion.field }}' 不匹配: 预期 {{ assertion.expected | tojson }}, 实际 {_actual_val}"
+        )
+{% elif assertion.operator == "ne" %}
+        assert _actual_val != {{ assertion.expected | tojson }}
+{% elif assertion.operator == "contains" %}
+        assert {{ assertion.expected | tojson }} in _actual_val
+{% elif assertion.operator == "gt" %}
+        assert _actual_val > {{ assertion.expected }}
+{% elif assertion.operator == "lt" %}
+        assert _actual_val < {{ assertion.expected }}
+{% elif assertion.operator == "ge" %}
+        assert _actual_val >= {{ assertion.expected }}
+{% elif assertion.operator == "le" %}
+        assert _actual_val <= {{ assertion.expected }}
+{% elif assertion.operator == "in" %}
+        assert _actual_val in {{ assertion.expected | tojson }}
+{% elif assertion.operator == "not_in" %}
+        assert _actual_val not in {{ assertion.expected | tojson }}
+{% endif %}
+{% elif assertion.type == "header" %}
+        # 断言: 响应头 {{ assertion.field }}
+        assert response.headers.get("{{ assertion.field }}") == {{ assertion.expected | tojson }}
+{% elif assertion.type == "contains" %}
+        # 断言: 响应体包含
+        assert {{ assertion.expected | tojson }} in response.text
+{% endif %}
+{% endfor %}
+
+{% endfor %}
+
+# ============================================
+# 辅助函数
+# ============================================
+
+def _extract_json_path(data: dict, path: str):
+    """简易 JSON Path 提取（支持点号分隔路径，如 data.user.id）"""
+    keys = path.replace("$.", "").split(".")
+    current = data
+    for key in keys:
+        if isinstance(current, dict):
+            current = current.get(key)
+        elif isinstance(current, list):
+            try:
+                current = current[int(key)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+    return current
+
+
+def _do_assertion(response: httpx.Response, assertion: dict):
+    """执行动态断言（数据驱动场景）"""
+    a_type = assertion.get("type", "status_code")
+    field = assertion.get("field", "")
+    operator = assertion.get("operator", "eq")
+    expected = assertion.get("expected")
+
+    if a_type == "status_code":
+        actual = response.status_code
+    elif a_type == "json_field":
+        actual = _extract_json_path(response.json(), field)
+    elif a_type == "header":
+        actual = response.headers.get(field)
+    elif a_type == "contains":
+        assert expected in response.text, f"响应体不包含: {expected}"
+        return
+    else:
+        return
+
+    if operator == "eq":
+        assert actual == expected, f"断言失败: {field} 预期 {expected}, 实际 {actual}"
+    elif operator == "ne":
+        assert actual != expected
+    elif operator == "gt":
+        assert actual > expected
+    elif operator == "lt":
+        assert actual < expected
+    elif operator == "ge":
+        assert actual >= expected
+    elif operator == "le":
+        assert actual <= expected
+    elif operator == "contains":
+        assert expected in actual
+    elif operator == "in":
+        assert actual in expected
+    elif operator == "not_in":
+        assert actual not in expected
